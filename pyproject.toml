@@ -1,0 +1,26 @@
+[project]
+name = "arabic-sentiment-analysis"
+version = "0.1.0"
+description = "Arabic sentiment analysis project"
+readme = "README.md"
+authors = [
+    { name = "Omar Elsanosy", email = "amr205869@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.3",
+    "pandas>=3.0.6",
+    "scikit-learn>=1.9.1",
+    "seaborn>=0.13.2",
+    "torch>=2.14.0",
+    "tqdm>=4.70.1",
+    "transformers>=5.17.0",
+]
+
+[project.scripts]
+arabic-sentiment-analysis = "arabic_sentiment_analysis:main"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"

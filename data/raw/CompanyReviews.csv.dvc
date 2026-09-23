@@ -1,0 +1,5 @@
+outs:
+- md5: c28b6dc59f75df03565142cd1d983af5
+  size: 4406789
+  hash: md5
+  path: CompanyReviews.csv
