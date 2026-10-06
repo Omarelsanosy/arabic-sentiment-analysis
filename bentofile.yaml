@@ -1,0 +1,9 @@
+service: "src.arabic_sentiment_analysis.service:SentimentService"
+include:
+  - "src/arabic_sentiment_analysis/**"
+  - "models/arabert_sentiment/**"
+python:
+  packages:
+    - "bentoml>=1.4.30"
+    - "torch"
+    - "transformers>=5.17.0"

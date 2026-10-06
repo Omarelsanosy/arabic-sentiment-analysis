@@ -1,5 +1,6 @@
 import re
 
+
 def clean_arabic_text(text):
     text = str(text)
 

@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+
+  # BentoML
+  - job_name: "bentoml"
+    static_configs:
+      - targets: ["bentoml:8000"]
+
+  # cAdvisor
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]
