@@ -1,0 +1,17 @@
+=== Correctness Check ===
+PyTorch logits shape: (3, 3)
+ONNX logits shape:    (3, 3)
+Maximum absolute difference: 0.00000753
+PASS: PyTorch and ONNX logits are close.
+
+PyTorch CPU
+Mean latency: 47.163 ms
+P50 latency:  43.492 ms
+P95 latency:  64.768 ms
+
+ONNX Runtime CPU
+Mean latency: 26.768 ms
+P50 latency:  26.655 ms
+P95 latency:  28.482 ms
+
+ONNX/PyTorch speed ratio: 1.76x

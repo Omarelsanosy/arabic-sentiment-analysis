@@ -1,0 +1,14 @@
+service: "src.arabic_sentiment_analysis.service_tensorrt:TensorRTSentimentService"
+include:
+  - "src/arabic_sentiment_analysis/**"
+  - "models/arabert_sentiment/config.json"
+  - "models/arabert_sentiment/tokenizer.json"
+  - "models/arabert_sentiment/tokenizer_config.json"
+  - "models/arabert_sentiment/model.fp16.engine"
+python:
+  packages:
+    - "bentoml>=1.4.30"
+    - "numpy>=2.5.3"
+    - "transformers>=5.17.0"
+    - "tensorrt-cu12==11.4.0.106"
+    - "cuda-python>=13.4,<14"
