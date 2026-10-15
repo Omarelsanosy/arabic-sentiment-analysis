@@ -1,286 +1,253 @@
 # Arabic Sentiment Analysis
 
-This project builds and serves an Arabic sentiment analysis model for customer review classification. It uses an AraBERT-based transformer model trained on Arabic text and exposes a prediction API through a BentoML service.
+An AraBERT-based project for classifying Arabic customer reviews as positive,
+neutral, or negative. It includes text preprocessing, model training and
+evaluation, BentoML inference services, ONNX export, an optional TensorRT
+service, and monitoring for vocabulary drift.
 
 ## Features
 
-- Arabic text preprocessing and normalization
-- AraBERT-based sentiment classification
-- Batch prediction API for review text
-- MLflow tracking artifacts for experiments
-- BentoML deployment-ready service
-- Vocabulary drift monitoring with Evidently, Prometheus, and Grafana
-- Unit tests for prediction behavior
+- Arabic review preprocessing and sentiment classification
+- Local Python prediction function and batchable BentoML API
+- Training and evaluation artifacts tracked with MLflow
+- ONNX export and optional TensorRT inference
+- Vocabulary-drift monitoring with Evidently, Prometheus, and Grafana
+- Stable/canary traffic routing through Nginx
+- Automated tests and linting with pytest and Ruff
 
 ## Project structure
 
 ```text
 .
-├── .github/
-│   └── workflows/
-│       └── ci.yml
+├── .github/workflows/                 # CI workflow
 ├── data/
 │   ├── raw/
 │   └── processed/
-├── models/
-│   └── arabert_sentiment/
-│       ├── model.fp16.engine
-│       ├── model.onnx
-│       ├── model.safetensors
-│       └── vocabulary_reference.json
-├── mlruns/                         # MLflow experiments and artifacts
+├── models/arabert_sentiment/           # Model, tokenizer, and inference assets
+├── mlruns/                             # MLflow experiments and artifacts
 ├── monitoring/
 │   ├── grafana/
 │   │   ├── dashboards/
-│   │   │   └── vocabulary-drift.json
 │   │   ├── provisioning/
 │   │   └── dashboard-screenshot.png
 │   ├── nginx/
-│   │   └── nginx.conf
 │   ├── prometheus/
-│   │   ├── alert_rules.yml
-│   │   └── prometheus.yml
 │   └── docker-compose.yml
-├── notebooks/
-│   └── arabert-sentiment.ipynb
-├── reports/
-├── scripts/
-│   └── build_vocabulary_reference.py
-├── src/
-│   └── arabic_sentiment_analysis/
-│       ├── export_onnx.py
-│       ├── model.py
-│       ├── predict.py
-│       ├── preprocessing.py
-│       ├── service.py
-│       ├── service_tensorrt.py
-│       ├── training.py
-│       └── vocabulary_drift.py
-├── tests/                           # Unit and API tests
-├── bentofile-tensorrt.yaml
-├── bentofile.yaml
+├── notebooks/                          # Exploration and training notebook
+├── reports/                            # Benchmark and evaluation reports
+├── scripts/                            # Model and reference-data utilities
+├── src/arabic_sentiment_analysis/
+│   ├── model.py
+│   ├── predict.py
+│   ├── preprocessing.py
+│   ├── training.py
+│   ├── service.py
+│   ├── service_tensorrt.py
+│   ├── export_onnx.py
+│   └── vocabulary_drift.py
+├── tests/
 ├── Dockerfile
+├── bentofile.yaml
+├── bentofile-tensorrt.yaml
 ├── locustfile.py
 ├── pyproject.toml
-├── pytest.ini
-├── uv.lock
 └── README.md
 ```
 
-## Tech stack
+## Requirements
 
-- Python 3.12+
-- PyTorch
-- Hugging Face Transformers
-- scikit-learn
-- MLflow
-- BentoML
-- Pytest
-- Ruff
-- Locust
+- Python 3.12 or newer
+- [uv](https://docs.astral.sh/uv/) for dependency and environment management
+- Docker with the Compose plugin to run the monitoring stack
+- NVIDIA GPU and compatible CUDA/TensorRT runtime only for TensorRT inference
 
-## Installation
-
-Use `uv` to install dependencies and set up the environment:
-
-```bash
-uv sync --group dev
-```
-
-If you do not have `uv` installed yet:
+Install uv if needed:
 
 ```bash
 pip install uv
 ```
 
-## Running tests
+Install the project and development dependencies:
 
 ```bash
-uv run pytest
+uv sync --group dev
 ```
 
-## Predicting sentiment
+## Run a prediction
 
-You can run a quick prediction using the package API:
+Use the Python prediction helper:
 
 ```bash
 uv run python -c "from arabic_sentiment_analysis.predict import predict_sentiment; print(predict_sentiment('الخدمة سيئة جدًا'))"
 ```
 
-Expected output shape:
+The result contains the predicted label and its confidence:
 
 ```python
-{
-    'sentiment': 'Negative',
-    'confidence': 0.91
-}
+{"sentiment": "Negative", "confidence": 0.91}
 ```
 
-## Exporting to ONNX
+The numeric confidence depends on the model output. Text is normalized before
+tokenization, and inputs are truncated or padded to a maximum of 128 tokens.
+Empty or invalid text returns `Neutral` with `0.0` confidence.
 
-Install the optional ONNX dependency and export the locally saved model:
+## Serve the BentoML API
+
+Start the local service:
+
+```bash
+uv run bentoml serve src/arabic_sentiment_analysis/service.py --host 0.0.0.0 --port 8000
+```
+
+The batchable prediction API accepts a list of Arabic texts. For example:
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d "{\"text\": [\"الخدمة سيئة جدًا\", \"شحن سريع\"]}"
+```
+
+The service also exposes Prometheus metrics at
+`http://localhost:8000/metrics`.
+
+## Train and evaluate
+
+The training workflow and supporting experiments are in
+`notebooks/arabert-sentiment.ipynb` and
+`src/arabic_sentiment_analysis/training.py`. Training and evaluation artifacts
+are recorded under `mlruns/`. Refer to the notebook for the dataset preparation
+and experiment workflow.
+
+## Export to ONNX
+
+Install the optional ONNX dependencies and export the local model:
 
 ```bash
 uv sync --extra onnx
 uv run arabic-sentiment-export-onnx
 ```
 
-The exporter writes `models/arabert_sentiment/model.onnx` by default, checks the
-exported graph, and supports variable batch and sequence lengths. To choose a
-different destination:
+The default output is `models/arabert_sentiment/model.onnx`. To choose another
+destination:
 
 ```bash
 uv run arabic-sentiment-export-onnx --output path/to/model.onnx
 ```
 
-## Building and serving the TensorRT Bento
+## TensorRT service
 
-The TensorRT Bento uses the prebuilt FP16 engine at
-`models/arabert_sentiment/model.fp16.engine`. Install the project and its
-TensorRT dependencies, then build the Bento:
+The optional TensorRT Bento uses
+`models/arabert_sentiment/model.fp16.engine`. Install the TensorRT dependencies
+and build the Bento:
 
 ```bash
 uv sync --extra tensorrt
 uv run bentoml build -f bentofile-tensorrt.yaml --name arabic-sentiment-tensorrt --platform windows
 ```
 
-Serve the built Bento on a machine with an NVIDIA GPU and a compatible NVIDIA
-driver:
+Serve it on a machine with a compatible NVIDIA GPU, driver, CUDA, and TensorRT
+runtime:
 
 ```bash
 uv run bentoml serve arabic-sentiment-tensorrt:latest --host 0.0.0.0 --port 8000
 ```
 
-The engine was built with TensorRT 11.4 for Windows and the local GTX 1650.
-TensorRT engine plans are platform- and runtime-specific: rebuild the engine
-on the target operating system, GPU, and TensorRT version before building a
-production Bento for a different environment. In particular, a Windows engine
-cannot be served from a Linux container. The Bento loads the serialized engine
-directly, chunks requests larger than the engine's batch limit of 16, and does
-not silently fall back to PyTorch.
+The checked-in engine was built for Windows with TensorRT 11.4 on a GTX 1650.
+TensorRT engine plans are specific to the operating system, GPU, and TensorRT
+runtime. Rebuild the engine for the target environment before deploying it
+elsewhere; a Windows engine cannot be served in a Linux container.
 
-## BentoML service
+## Vocabulary-drift monitoring
 
-The service is defined in `src/arabic_sentiment_analysis/service.py` and loads
-the model from the local `models/arabert_sentiment` directory.
+The API tracks inference tokenizer tokens against the packaged reference sample
+and exports the Evidently Population Stability Index (PSI) as
+`arabic_sentiment_vocabulary_psi`. The metric is first calculated after 1,000
+non-special tokens have been observed, then refreshed for each additional 1,000
+tokens using a rolling window of up to 50,000. Unknown tokens are retained;
+padding and other special tokens are excluded.
 
-To start the service locally:
-
-```bash
-bentoml serve src/arabic_sentiment_analysis/service.py
-```
-
-You can then send batch requests with a list of Arabic review strings.
-
-## Model and artifacts
-
-- Model directory: `models/arabert_sentiment`
-- Training metadata and experiment tracking: `mlruns/`
-- Evaluation report artifacts are stored under `mlruns/.../artifacts/`
-
-## Vocabulary drift monitoring
-
-The service compares tokenizer token frequencies from inference traffic with a
-reference sample built from the review corpus. It exports the rolling
-Evidently Population Stability Index as
-`arabic_sentiment_vocabulary_psi` on BentoML's Prometheus `/metrics` endpoint.
-The metric is updated after at least 1,000 non-special tokens have been observed
-and refreshes for each additional 1,000 tokens, using the most recent 50,000.
-`[UNK]` tokens are retained; padding and other special tokens are excluded.
-
-Generate or refresh the packaged reference after updating the corpus or model
-tokenizer:
+After changing the source review corpus or model tokenizer, rebuild the
+reference:
 
 ```bash
 uv run python scripts/build_vocabulary_reference.py
 ```
 
-The generated `models/arabert_sentiment/vocabulary_reference.json` is packaged
-with both Bento variants and the Docker image; the raw corpus is not included in
-the serving image.
+The generated `models/arabert_sentiment/vocabulary_reference.json` is included
+in the Bento and Docker image; the raw corpus is not copied into the serving
+image.
 
-Start both API cohorts, the weighted Nginx router, and monitoring stack from
-the `monitoring` directory:
+### Start the monitoring stack
+
+From the `monitoring` directory, build and start the services:
 
 ```bash
 docker compose up --build
 ```
 
-The router is exposed at `http://localhost:8000` and sends 5% of requests to
-`sentiment-canary` and 95% to `sentiment-stable`, as configured in
-`monitoring/nginx/nginx.conf`. Prometheus scrapes each cohort directly, with
-`rollout="stable"` and `rollout="canary"` labels, so their PSI can be compared.
-For a real rollout, deploy the already-built stable and candidate images using
-`SENTIMENT_STABLE_IMAGE` and `SENTIMENT_CANARY_IMAGE`; do not build both from
-the same source revision and treat that as a canary. For example, create
-`monitoring/.env` with the immutable image tags:
+The stack provides:
+
+| Service | URL | Purpose |
+| --- | --- | --- |
+| Nginx router | <http://localhost:8000> | Routes API traffic to stable and canary |
+| Grafana | <http://localhost:3000> | Provisioned model-drift dashboard |
+| Prometheus | <http://localhost:9090> | Metrics, alert rules, and alert status |
+| cAdvisor | <http://localhost:8081> | Container metrics |
+
+Grafana's initial login is `admin` / `admin`; change the default password after
+first login. The dashboard compares stable and canary PSI. PSI values are not
+available until each service has observed enough inference tokens.
+
+Prometheus evaluates `ArabicSentimentVocabularyDrift` separately for each
+rollout cohort. The alert becomes active when PSI is greater than `0.25` for
+one minute and can be viewed at <http://localhost:9090/alerts>. This rule raises
+an alert in Prometheus; it does not send email by itself. Although the Compose
+file includes Grafana SMTP settings, email delivery also requires configured
+SMTP credentials and a Grafana email contact point and notification policy.
+Set `SMTP_USER` and `SMTP_PASSWORD` in `monitoring/.env` if using email
+notifications. Do not commit real credentials.
+
+![Grafana dashboard showing inference latency and stable/canary vocabulary PSI](monitoring/grafana/dashboard-screenshot.png)
+
+### Stable and canary images
+
+For local development, Compose builds both API cohorts from the current source.
+That is not a meaningful model canary: both cohorts use the same code and model.
+For a real rollout, build and publish separate immutable images, then set their
+references in `monitoring/.env`:
 
 ```dotenv
 SENTIMENT_STABLE_IMAGE=registry.example/arabic-sentiment:stable
 SENTIMENT_CANARY_IMAGE=registry.example/arabic-sentiment:candidate-2026-10-12
 ```
 
-Then deploy those images without rebuilding them:
+Deploy those already-built images without rebuilding:
 
 ```bash
 docker compose up -d --no-build
 ```
 
-Grafana is available at `http://localhost:3000` (default credentials
-`admin` / `admin`) with the provisioned **Arabic Sentiment Model Drift**
-dashboard. Prometheus is at `http://localhost:9090`; it fires the
-`ArabicSentimentVocabularyDrift` alert when PSI exceeds `0.25` for one minute.
-The rule evaluates each rollout cohort, and the alert is visible at
-`http://localhost:9090/alerts`. No PSI value is reported until enough inference
-tokens have been observed.
+The default Nginx weights send 95% of requests to stable and 5% to canary.
+After reviewing prediction errors, latency, and PSI, edit the upstream weights
+in `monitoring/nginx/nginx.conf` to change the traffic split, then reload Nginx:
 
-The Prometheus rule raises an alert but does not send notifications by itself.
-The SMTP settings in `monitoring/docker-compose.yml` configure Grafana's mail
-server; they do not route Prometheus alerts to an inbox. To receive email
-notifications, provide `SMTP_USER` and `SMTP_PASSWORD` in `monitoring/.env` and
-configure an email contact point and notification policy in the alerting
-system.
+```bash
+docker compose exec nginx nginx -s reload
+```
 
-The dashboard compares stable and canary vocabulary PSI and shows P95 inference
-latency alongside container monitoring metrics:
+To promote or roll back, set the selected upstream to `down` and assign all
+traffic to the other upstream. Keep the previous stable image available for
+rollback.
 
-![Grafana dashboard showing P95 inference latency and stable/canary vocabulary PSI](monitoring/grafana/dashboard-screenshot.png)
+## Tests and linting
 
-### Canary rollout stages
+Run the test suite and Ruff:
 
-Keep each new model build isolated in the canary cohort, and advance only after
-checking prediction errors, latency, and the cohort's vocabulary PSI in Grafana.
-The Prometheus `ArabicSentimentVocabularyDrift` alert triggers when PSI is
-greater than `0.25` for one minute.
-
-1. **Baseline:** Run the stable image at 100% and record its error rate,
-   latency, and PSI before deploying a candidate.
-2. **Initial canary (5/95):** Route 5% to the candidate and 95% to stable.
-   Observe for at least 30 minutes and collect enough traffic for the PSI
-   window to populate.
-3. **Expand (25/75):** If errors and latency remain within the existing service
-   SLOs and candidate PSI stays at or below `0.25`, set the Nginx weights to
-   canary `25`, stable `75`; observe for at least one hour.
-4. **Majority canary (50/50):** If the same checks pass, set weights to
-   canary `50`, stable `50`; observe for at least two hours.
-5. **Promote (100/0):** After the 50/50 checks pass, route all traffic to the
-   canary and mark the stable upstream `down`. Keep the stable image available
-   for immediate rollback.
-6. **Rollback:** At any stage, if the candidate breaches the error/latency SLO
-   or its PSI alert fires, set stable to `weight=100` and mark canary `down`,
-   then investigate before resuming.
-
-For stages 2–4, edit the two `weight` values in the Nginx upstream. To promote
-or roll back, use Nginx's `down` parameter for the zero-traffic upstream rather
-than `weight=0`. Apply each change with
-`docker compose exec nginx nginx -s reload`.
-
-## Notes
-
-- The model expects Arabic text and preprocesses it before tokenization.
-- Input text is truncated and padded to a maximum length of 128 tokens.
-- Predictions return the label name and the confidence score for the most likely class.
+```bash
+uv run pytest
+uv run ruff check .
+```
 
 ## License
 
-This project is for educational and research use within the repository context.
+This repository is provided for educational and research use.
