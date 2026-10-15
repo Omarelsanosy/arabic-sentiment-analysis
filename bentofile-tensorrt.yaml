@@ -8,7 +8,9 @@ include:
 python:
   packages:
     - "bentoml>=1.4.30"
+    - "evidently>=0.7.23"
     - "numpy>=2.5.3"
+    - "prometheus-client>=0.26.0"
     - "transformers>=5.17.0"
     - "tensorrt-cu12==11.4.0.106"
     - "cuda-python>=13.4,<14"

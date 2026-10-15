@@ -20,3 +20,16 @@ def test_clean_arabic_text_handles_plain_text_without_changes() -> None:
     cleaned = clean_arabic_text(text)
 
     assert cleaned == "الخدمة ممتازة"
+
+
+def test_clean_arabic_text_handles_none_and_blank_input() -> None:
+    assert clean_arabic_text(None) == ""
+    assert clean_arabic_text("   ") == ""
+
+
+def test_clean_arabic_text_removes_urls_mentions_and_hashtags() -> None:
+    text = "#ممتاز @user هذا رابط https://example.com و #جيد"
+
+    cleaned = clean_arabic_text(text)
+
+    assert cleaned == "ممتاز هذا رابط و جيد"

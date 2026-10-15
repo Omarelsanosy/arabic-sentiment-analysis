@@ -5,5 +5,7 @@ include:
 python:
   packages:
     - "bentoml>=1.4.30"
+    - "evidently>=0.7.23"
+    - "prometheus-client>=0.26.0"
     - "torch"
     - "transformers>=5.17.0"

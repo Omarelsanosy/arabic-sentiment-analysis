@@ -10,13 +10,15 @@ from arabic_sentiment_analysis.preprocessing import clean_arabic_text
 def predict_sentiment(text: str) -> dict[str, str | float]:
     # Clean the input text
     text = clean_arabic_text(text)
+    if not text:
+        return {"sentiment": "Neutral", "confidence": 0.0}
 
     inputs = tokenizer(
         text,
         return_tensors="pt",
         truncation=True,
         padding=True,
-        max_length=128
+        max_length=128,
     )
 
     # Move tensors to the same device as the model

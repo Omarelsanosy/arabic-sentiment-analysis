@@ -1,0 +1,12 @@
+groups:
+  - name: arabic-sentiment-model
+    rules:
+      - alert: ArabicSentimentVocabularyDrift
+        expr: arabic_sentiment_vocabulary_psi > 0.25
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Arabic sentiment vocabulary drift is above threshold
+          description: >-
+            Vocabulary PSI is {{ $value }}, exceeding the 0.25 alert threshold.

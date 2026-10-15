@@ -9,34 +9,61 @@ This project builds and serves an Arabic sentiment analysis model for customer r
 - Batch prediction API for review text
 - MLflow tracking artifacts for experiments
 - BentoML deployment-ready service
+- Vocabulary drift monitoring with Evidently, Prometheus, and Grafana
 - Unit tests for prediction behavior
 
 ## Project structure
 
 ```text
 .
+├── .github/
+│   └── workflows/
+│       └── ci.yml
 ├── data/
 │   ├── raw/
 │   └── processed/
 ├── models/
 │   └── arabert_sentiment/
-├── mlruns/
+│       ├── model.fp16.engine
+│       ├── model.onnx
+│       ├── model.safetensors
+│       └── vocabulary_reference.json
+├── mlruns/                         # MLflow experiments and artifacts
 ├── monitoring/
+│   ├── grafana/
+│   │   ├── dashboards/
+│   │   │   └── vocabulary-drift.json
+│   │   ├── provisioning/
+│   │   └── dashboard-screenshot.png
+│   ├── nginx/
+│   │   └── nginx.conf
+│   ├── prometheus/
+│   │   ├── alert_rules.yml
+│   │   └── prometheus.yml
+│   └── docker-compose.yml
 ├── notebooks/
+│   └── arabert-sentiment.ipynb
+├── reports/
+├── scripts/
+│   └── build_vocabulary_reference.py
 ├── src/
 │   └── arabic_sentiment_analysis/
+│       ├── export_onnx.py
 │       ├── model.py
 │       ├── predict.py
 │       ├── preprocessing.py
-│       ├── export_onnx.py
 │       ├── service.py
-│       └── training.py
-├── tests/
+│       ├── service_tensorrt.py
+│       ├── training.py
+│       └── vocabulary_drift.py
+├── tests/                           # Unit and API tests
+├── bentofile-tensorrt.yaml
 ├── bentofile.yaml
 ├── Dockerfile
 ├── locustfile.py
 ├── pyproject.toml
 ├── pytest.ini
+├── uv.lock
 └── README.md
 ```
 
@@ -150,6 +177,103 @@ You can then send batch requests with a list of Arabic review strings.
 - Model directory: `models/arabert_sentiment`
 - Training metadata and experiment tracking: `mlruns/`
 - Evaluation report artifacts are stored under `mlruns/.../artifacts/`
+
+## Vocabulary drift monitoring
+
+The service compares tokenizer token frequencies from inference traffic with a
+reference sample built from the review corpus. It exports the rolling
+Evidently Population Stability Index as
+`arabic_sentiment_vocabulary_psi` on BentoML's Prometheus `/metrics` endpoint.
+The metric is updated after at least 1,000 non-special tokens have been observed
+and refreshes for each additional 1,000 tokens, using the most recent 50,000.
+`[UNK]` tokens are retained; padding and other special tokens are excluded.
+
+Generate or refresh the packaged reference after updating the corpus or model
+tokenizer:
+
+```bash
+uv run python scripts/build_vocabulary_reference.py
+```
+
+The generated `models/arabert_sentiment/vocabulary_reference.json` is packaged
+with both Bento variants and the Docker image; the raw corpus is not included in
+the serving image.
+
+Start both API cohorts, the weighted Nginx router, and monitoring stack from
+the `monitoring` directory:
+
+```bash
+docker compose up --build
+```
+
+The router is exposed at `http://localhost:8000` and sends 5% of requests to
+`sentiment-canary` and 95% to `sentiment-stable`, as configured in
+`monitoring/nginx/nginx.conf`. Prometheus scrapes each cohort directly, with
+`rollout="stable"` and `rollout="canary"` labels, so their PSI can be compared.
+For a real rollout, deploy the already-built stable and candidate images using
+`SENTIMENT_STABLE_IMAGE` and `SENTIMENT_CANARY_IMAGE`; do not build both from
+the same source revision and treat that as a canary. For example, create
+`monitoring/.env` with the immutable image tags:
+
+```dotenv
+SENTIMENT_STABLE_IMAGE=registry.example/arabic-sentiment:stable
+SENTIMENT_CANARY_IMAGE=registry.example/arabic-sentiment:candidate-2026-10-12
+```
+
+Then deploy those images without rebuilding them:
+
+```bash
+docker compose up -d --no-build
+```
+
+Grafana is available at `http://localhost:3000` (default credentials
+`admin` / `admin`) with the provisioned **Arabic Sentiment Model Drift**
+dashboard. Prometheus is at `http://localhost:9090`; it fires the
+`ArabicSentimentVocabularyDrift` alert when PSI exceeds `0.25` for one minute.
+The rule evaluates each rollout cohort, and the alert is visible at
+`http://localhost:9090/alerts`. No PSI value is reported until enough inference
+tokens have been observed.
+
+The Prometheus rule raises an alert but does not send notifications by itself.
+The SMTP settings in `monitoring/docker-compose.yml` configure Grafana's mail
+server; they do not route Prometheus alerts to an inbox. To receive email
+notifications, provide `SMTP_USER` and `SMTP_PASSWORD` in `monitoring/.env` and
+configure an email contact point and notification policy in the alerting
+system.
+
+The dashboard compares stable and canary vocabulary PSI and shows P95 inference
+latency alongside container monitoring metrics:
+
+![Grafana dashboard showing P95 inference latency and stable/canary vocabulary PSI](monitoring/grafana/dashboard-screenshot.png)
+
+### Canary rollout stages
+
+Keep each new model build isolated in the canary cohort, and advance only after
+checking prediction errors, latency, and the cohort's vocabulary PSI in Grafana.
+The Prometheus `ArabicSentimentVocabularyDrift` alert triggers when PSI is
+greater than `0.25` for one minute.
+
+1. **Baseline:** Run the stable image at 100% and record its error rate,
+   latency, and PSI before deploying a candidate.
+2. **Initial canary (5/95):** Route 5% to the candidate and 95% to stable.
+   Observe for at least 30 minutes and collect enough traffic for the PSI
+   window to populate.
+3. **Expand (25/75):** If errors and latency remain within the existing service
+   SLOs and candidate PSI stays at or below `0.25`, set the Nginx weights to
+   canary `25`, stable `75`; observe for at least one hour.
+4. **Majority canary (50/50):** If the same checks pass, set weights to
+   canary `50`, stable `50`; observe for at least two hours.
+5. **Promote (100/0):** After the 50/50 checks pass, route all traffic to the
+   canary and mark the stable upstream `down`. Keep the stable image available
+   for immediate rollback.
+6. **Rollback:** At any stage, if the candidate breaches the error/latency SLO
+   or its PSI alert fires, set stable to `weight=100` and mark canary `down`,
+   then investigate before resuming.
+
+For stages 2–4, edit the two `weight` values in the Nginx upstream. To promote
+or roll back, use Nginx's `down` parameter for the zero-traffic upstream rather
+than `weight=0`. Apply each change with
+`docker compose exec nginx nginx -s reload`.
 
 ## Notes
 

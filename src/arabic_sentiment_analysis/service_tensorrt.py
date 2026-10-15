@@ -7,6 +7,10 @@ import numpy as np
 from transformers import AutoConfig, AutoTokenizer
 
 from arabic_sentiment_analysis.preprocessing import clean_arabic_text
+from arabic_sentiment_analysis.vocabulary_drift import (
+    VocabularyPSI,
+    load_reference_tokens,
+)
 
 
 class TensorRTEngine:
@@ -157,6 +161,26 @@ class TensorRTSentimentService:
             local_files_only=True,
         )
         self.engine = TensorRTEngine(model_path / "model.fp16.engine")
+        from prometheus_client import Gauge
+
+        self.vocabulary_psi_gauge = Gauge(
+            "arabic_sentiment_vocabulary_psi",
+            "Population Stability Index of inference token frequencies versus "
+            "the packaged review-corpus reference.",
+            multiprocess_mode="max",
+        )
+        self.vocabulary_psi_gauge.set(float("nan"))
+        reference_tokens = load_reference_tokens(
+            model_path / "vocabulary_reference.json"
+        )
+        ignored_token_ids = set(self.tokenizer.all_special_ids)
+        if self.tokenizer.unk_token_id is not None:
+            ignored_token_ids.discard(self.tokenizer.unk_token_id)
+        self.vocabulary_psi = VocabularyPSI(
+            reference_tokens,
+            self.vocabulary_psi_gauge,
+            ignored_token_ids,
+        )
 
     @bentoml.api
     def predict(self, text: list[str]) -> list[dict[str, str | float]]:
@@ -178,6 +202,10 @@ class TensorRTSentimentService:
                 for name, value in tokens.items()
             }
             logits_chunks.append(self.engine.infer(inputs))
+            self.vocabulary_psi.observe(
+                inputs["input_ids"].tolist(),
+                inputs["attention_mask"].tolist(),
+            )
         logits = np.concatenate(logits_chunks, axis=0)
         logits -= logits.max(axis=1, keepdims=True)
         probabilities = np.exp(logits)

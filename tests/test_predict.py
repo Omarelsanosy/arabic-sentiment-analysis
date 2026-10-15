@@ -19,3 +19,9 @@ def test_predict_sentiment_returns_positive_label_for_positive_review() -> None:
 
     assert result["sentiment"] == "Positive"
     assert 0.0 < result["confidence"] <= 1.0
+
+
+def test_predict_sentiment_handles_empty_text_gracefully() -> None:
+    result = predict_sentiment("")
+
+    assert result == {"sentiment": "Neutral", "confidence": 0.0}

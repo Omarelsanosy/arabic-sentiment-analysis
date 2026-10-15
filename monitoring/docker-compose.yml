@@ -1,15 +1,39 @@
 services:
 
   # =========================
-  # BentoML API
+  # Stable and canary BentoML APIs
   # =========================
-  bentoml:
+  sentiment-stable:
     build:
       context: ..
       dockerfile: Dockerfile
-    container_name: arabic-sentiment
+    image: ${SENTIMENT_STABLE_IMAGE:-arabic-sentiment:stable}
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  sentiment-canary:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ${SENTIMENT_CANARY_IMAGE:-arabic-sentiment:canary}
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+
+  # =========================
+  # Weighted request routing
+  # =========================
+  nginx:
+    image: nginx:alpine
     ports:
-      - "8000:8000"
+      - "8000:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - sentiment-stable
+      - sentiment-canary
     restart: unless-stopped
 
 
@@ -23,8 +47,11 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
       - prometheus_data:/prometheus
     depends_on:
+      - sentiment-stable
+      - sentiment-canary
       - cadvisor
     restart: unless-stopped
 
@@ -36,7 +63,7 @@ services:
     image: gcr.io/cadvisor/cadvisor:latest
     container_name: cadvisor
     ports:
-      - "8080:8080"
+      - "8081:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
@@ -53,8 +80,18 @@ services:
     container_name: grafana
     ports:
       - "3000:3000"
+    environment:
+      GF_SMTP_ENABLED: "true"
+      GF_SMTP_HOST: "smtp.gmail.com:587"
+      GF_SMTP_USER: "${SMTP_USER}"
+      GF_SMTP_PASSWORD: "${SMTP_PASSWORD}"
+      GF_SMTP_FROM_ADDRESS: "${SMTP_USER}"
+      GF_SMTP_FROM_NAME: "Grafana Alerts"
+      GF_SMTP_STARTTLS_POLICY: "Mandatory"
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
     restart: unless-stopped
